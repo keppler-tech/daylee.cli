@@ -68,6 +68,8 @@ def _handle_session_start(cc_session_id: str, cwd: str, now: datetime, config: C
     if not _repo_allowed(repo_url, config.repo_allowlist, config.repo_denylist):
         return 0
 
+    start_sha = _resolve_git_head_sha(cwd)
+
     log_path = session_log_path(cc_session_id)
     _append_session_log(
         log_path,
@@ -78,6 +80,7 @@ def _handle_session_start(cc_session_id: str, cwd: str, now: datetime, config: C
             "repo_label": repo_label,
             "branch": branch,
             "cwd": _normalize_path(cwd),
+            "start_sha": start_sha,
         },
     )
 
@@ -110,6 +113,7 @@ def _handle_session_end(cc_session_id: str, cwd: str, now: datetime, config: Con
     entries = _read_session_log(log_path)
     started_at = _started_at(entries) or now
     duration_seconds = max(0, int((now - started_at).total_seconds()))
+    start_sha = _start_sha(entries)
 
     tool_counts: Counter[str] = Counter()
     files: list[str] = []
@@ -144,10 +148,16 @@ def _handle_session_end(cc_session_id: str, cwd: str, now: datetime, config: Con
     if files:
         event["files_touched"] = files
 
+    commit_subjects = _commit_subjects_since(cwd, start_sha)
+    summary = _summary_from_commits(commit_subjects)
+    if summary:
+        event["summary"] = summary
+
     if config.send_raw_prompts and prompt_previews:
-        summary = _summary_from_prompts(prompt_previews)
-        if summary:
-            event["summary"] = summary
+        if "summary" not in event:
+            prompt_summary = _summary_from_prompts(prompt_previews)
+            if prompt_summary:
+                event["summary"] = prompt_summary
         digest = _digest_from_prompts(prompt_previews)
         if digest:
             event["prompt_digest"] = digest
@@ -203,6 +213,14 @@ def _started_at(entries: list[dict]) -> datetime | None:
     return None
 
 
+def _start_sha(entries: list[dict]) -> str | None:
+    for e in entries:
+        if e.get("kind") == "start":
+            sha = e.get("start_sha")
+            return sha if isinstance(sha, str) and sha else None
+    return None
+
+
 def _files_from_tool_input(tool_input: object) -> list[str]:
     if not isinstance(tool_input, dict):
         return []
@@ -221,6 +239,50 @@ def _summary_from_prompts(prompts: list[str]) -> str | None:
     if len(first) > _SUMMARY_MAX_CHARS:
         first = first[:_SUMMARY_MAX_CHARS].rstrip() + "…"
     return first
+
+
+def _summary_from_commits(subjects: list[str]) -> str | None:
+    cleaned = [s.strip() for s in subjects if s and s.strip()]
+    if not cleaned:
+        return None
+    joined = "; ".join(cleaned)
+    if len(joined) > _SUMMARY_MAX_CHARS:
+        joined = joined[:_SUMMARY_MAX_CHARS].rstrip() + "…"
+    return joined
+
+
+def _commit_subjects_since(cwd: str, start_sha: str | None) -> list[str]:
+    """Return commit subjects authored in `cwd` since `start_sha` (exclusive)."""
+    if not start_sha:
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "log", "--pretty=%s", f"{start_sha}..HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _resolve_git_head_sha(cwd: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
 
 
 def _digest_from_prompts(prompts: list[str]) -> str | None:

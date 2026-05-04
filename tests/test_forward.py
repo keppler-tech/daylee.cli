@@ -20,6 +20,8 @@ def _no_flusher(monkeypatch: pytest.MonkeyPatch) -> None:
 def _no_git_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests that don't care about git context shouldn't shell out to git."""
     monkeypatch.setattr(forward, "_resolve_git_context", lambda cwd: (None, None, None))
+    monkeypatch.setattr(forward, "_resolve_git_head_sha", lambda cwd: None)
+    monkeypatch.setattr(forward, "_commit_subjects_since", lambda cwd, sha: [])
 
 
 def _payload(hook_event_name: str, *, session_id: str = "ccs-test", **extra) -> str:
@@ -167,6 +169,48 @@ class TestSessionEnd:
         end = ends[0]
         assert "Implement the V1" in end["summary"]
         assert "add tests too" in end["prompt_digest"]
+
+    def test_summary_from_commits_even_without_raw_prompts(
+        self, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(forward, "_resolve_git_head_sha", lambda cwd: "abc123")
+        monkeypatch.setattr(
+            forward,
+            "_commit_subjects_since",
+            lambda cwd, sha: ["Fix auth bug", "Add regression test"],
+        )
+
+        forward.forward_one_event(_payload("SessionStart"))
+        forward.forward_one_event(_payload("UserPromptSubmit", prompt="please fix it"))
+        forward.forward_one_event(_payload("SessionEnd"))
+
+        ends = [e for e in _read_queue() if e["kind"] == "session_end"]
+        assert len(ends) == 1
+        end = ends[0]
+        assert end["summary"] == "Fix auth bug; Add regression test"
+        # Raw prompts disabled by default, so no digest is sent.
+        assert "prompt_digest" not in end
+
+    def test_commit_summary_wins_over_prompt_summary_when_raw_prompts_on(
+        self, isolated_config_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from daylee import config as config_mod
+
+        cfg = config_mod.Config(send_raw_prompts=True)
+        monkeypatch.setattr(forward, "load_config", lambda: cfg)
+        monkeypatch.setattr(forward, "_resolve_git_head_sha", lambda cwd: "abc123")
+        monkeypatch.setattr(
+            forward, "_commit_subjects_since", lambda cwd, sha: ["Ship the V1"]
+        )
+
+        forward.forward_one_event(_payload("SessionStart"))
+        forward.forward_one_event(_payload("UserPromptSubmit", prompt="draft the design"))
+        forward.forward_one_event(_payload("SessionEnd"))
+
+        ends = [e for e in _read_queue() if e["kind"] == "session_end"]
+        assert ends[0]["summary"] == "Ship the V1"
+        # Digest still populated from prompts for server-side context.
+        assert "draft the design" in ends[0]["prompt_digest"]
 
     def test_skipped_when_no_log(self, isolated_config_dir: Path):
         forward.forward_one_event(_payload("SessionEnd"))
