@@ -37,6 +37,15 @@ def flusher_pid_file() -> Path:
     return config_dir() / "flusher.pid"
 
 
+def sessions_dir() -> Path:
+    return config_dir() / "sessions"
+
+
+def session_log_path(cc_session_id: str) -> Path:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in cc_session_id)
+    return sessions_dir() / f"{safe}.jsonl"
+
+
 def log_file() -> Path:
     return config_dir() / "log"
 

@@ -1,4 +1,4 @@
-"""Hook target: read a Claude Code hook event from stdin, redact, queue it."""
+"""Hook target: read a Claude Code hook event from stdin, aggregate, queue."""
 
 from __future__ import annotations
 
@@ -7,22 +7,29 @@ import os
 import socket
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import queue as queue_mod
-from .config import load_config
-from .paths import flusher_pid_file
+from .config import Config, load_config
+from .paths import flusher_pid_file, session_log_path
 from .redact import redact_text
 
 
-# Map Claude Code hook names to our internal event kinds.
-_HOOK_KINDS = {
-    "SessionStart": "session_start",
-    "SessionEnd": "session_end",
-    "Stop": "session_end",  # Stop events terminate a turn; we treat as session_end fallback if SessionEnd is absent
+_KNOWN_HOOK_EVENTS = {
+    "SessionStart",
+    "SessionEnd",
+    "Stop",
+    "PostToolUse",
+    "UserPromptSubmit",
 }
+
+_PROMPT_PREVIEW_BYTES = 500
+_SUMMARY_MAX_CHARS = 200
+_MAX_FILES_TOUCHED = 50
+_FILE_INPUT_KEYS = ("file_path", "notebook_path", "path")
 
 
 def forward_one_event(raw_payload: str) -> int:
@@ -35,8 +42,7 @@ def forward_one_event(raw_payload: str) -> int:
         return 0  # Don't fail the hook on a malformed payload; just drop it.
 
     hook_name = payload.get("hook_event_name") or payload.get("hook") or ""
-    kind = _HOOK_KINDS.get(hook_name)
-    if not kind:
+    if hook_name not in _KNOWN_HOOK_EVENTS:
         return 0
 
     cc_session_id = payload.get("session_id") or payload.get("sessionId") or ""
@@ -44,16 +50,43 @@ def forward_one_event(raw_payload: str) -> int:
         return 0
 
     cwd = payload.get("cwd") or os.getcwd()
-    repo_url, repo_label, branch = _resolve_git_context(cwd)
+    now = datetime.now(timezone.utc)
 
+    if hook_name == "SessionStart":
+        return _handle_session_start(cc_session_id, cwd, now, config)
+    if hook_name in ("SessionEnd", "Stop"):
+        return _handle_session_end(cc_session_id, cwd, now, config)
+    if hook_name == "PostToolUse":
+        return _handle_post_tool_use(cc_session_id, payload, now)
+    if hook_name == "UserPromptSubmit":
+        return _handle_user_prompt_submit(cc_session_id, payload, now, config)
+    return 0
+
+
+def _handle_session_start(cc_session_id: str, cwd: str, now: datetime, config: Config) -> int:
+    repo_url, repo_label, branch = _resolve_git_context(cwd)
     if not _repo_allowed(repo_url, config.repo_allowlist, config.repo_denylist):
         return 0
 
+    log_path = session_log_path(cc_session_id)
+    _append_session_log(
+        log_path,
+        {
+            "kind": "start",
+            "ts": now.isoformat(),
+            "repo_url": repo_url,
+            "repo_label": repo_label,
+            "branch": branch,
+            "cwd": _normalize_path(cwd),
+        },
+    )
+
     event: dict[str, Any] = {
         "cc_session_id": cc_session_id,
-        "kind": kind,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "kind": "session_start",
+        "timestamp": now.isoformat(),
         "cwd": _normalize_path(cwd),
+        "event_count": 1,
     }
     if repo_url:
         event["repo_url"] = repo_url
@@ -62,16 +95,163 @@ def forward_one_event(raw_payload: str) -> int:
     if branch:
         event["branch"] = branch
 
-    if kind == "session_end":
-        # MVP: we don't yet track per-tool counts or files_touched on the
-        # device side. V1 will accumulate these from PostToolUse hooks.
-        digest = payload.get("transcript") or payload.get("user_prompt")
-        if digest and config.send_raw_prompts:
-            event["prompt_digest"] = redact_text(str(digest))
-
     queue_mod.append_event(event)
     _spawn_flusher_if_needed()
     return 0
+
+
+def _handle_session_end(cc_session_id: str, cwd: str, now: datetime, config: Config) -> int:
+    log_path = session_log_path(cc_session_id)
+    if not log_path.exists():
+        # SessionStart never landed for this session (or repo was filtered).
+        # Nothing to update on the server.
+        return 0
+
+    entries = _read_session_log(log_path)
+    started_at = _started_at(entries) or now
+    duration_seconds = max(0, int((now - started_at).total_seconds()))
+
+    tool_counts: Counter[str] = Counter()
+    files: list[str] = []
+    seen_files: set[str] = set()
+    prompt_previews: list[str] = []
+
+    for e in entries:
+        kind = e.get("kind")
+        if kind == "tool":
+            name = str(e.get("name") or "")
+            if name:
+                tool_counts[name] += 1
+            for f in e.get("files") or []:
+                if isinstance(f, str) and f and f not in seen_files and len(files) < _MAX_FILES_TOUCHED:
+                    seen_files.add(f)
+                    files.append(f)
+        elif kind == "prompt":
+            preview = e.get("preview")
+            if isinstance(preview, str) and preview:
+                prompt_previews.append(preview)
+
+    event: dict[str, Any] = {
+        "cc_session_id": cc_session_id,
+        "kind": "session_end",
+        "timestamp": now.isoformat(),
+        "cwd": _normalize_path(cwd),
+        "duration_seconds": duration_seconds,
+        "event_count": len(entries),
+    }
+    if tool_counts:
+        event["tool_use_counts"] = dict(tool_counts)
+    if files:
+        event["files_touched"] = files
+
+    if config.send_raw_prompts and prompt_previews:
+        summary = _summary_from_prompts(prompt_previews)
+        if summary:
+            event["summary"] = summary
+        digest = _digest_from_prompts(prompt_previews)
+        if digest:
+            event["prompt_digest"] = digest
+
+    queue_mod.append_event(event)
+    _spawn_flusher_if_needed()
+
+    try:
+        log_path.unlink()
+    except OSError:
+        pass
+    return 0
+
+
+def _handle_post_tool_use(cc_session_id: str, payload: dict[str, Any], now: datetime) -> int:
+    log_path = session_log_path(cc_session_id)
+    if not log_path.exists():
+        return 0
+    tool_name = str(payload.get("tool_name") or "")
+    files = _files_from_tool_input(payload.get("tool_input"))
+    _append_session_log(
+        log_path,
+        {"kind": "tool", "name": tool_name, "files": files, "ts": now.isoformat()},
+    )
+    return 0
+
+
+def _handle_user_prompt_submit(
+    cc_session_id: str, payload: dict[str, Any], now: datetime, config: Config
+) -> int:
+    log_path = session_log_path(cc_session_id)
+    if not log_path.exists():
+        return 0
+    entry: dict[str, Any] = {"kind": "prompt", "ts": now.isoformat()}
+    if config.send_raw_prompts:
+        prompt = payload.get("prompt") or payload.get("user_prompt") or ""
+        if prompt:
+            redacted = redact_text(str(prompt)) or ""
+            if redacted:
+                entry["preview"] = redacted[:_PROMPT_PREVIEW_BYTES]
+    _append_session_log(log_path, entry)
+    return 0
+
+
+def _started_at(entries: list[dict]) -> datetime | None:
+    for e in entries:
+        if e.get("kind") == "start":
+            ts = e.get("ts")
+            try:
+                return datetime.fromisoformat(str(ts))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _files_from_tool_input(tool_input: object) -> list[str]:
+    if not isinstance(tool_input, dict):
+        return []
+    out: list[str] = []
+    for key in _FILE_INPUT_KEYS:
+        value = tool_input.get(key)
+        if isinstance(value, str) and value:
+            out.append(_normalize_path(value))
+    return out
+
+
+def _summary_from_prompts(prompts: list[str]) -> str | None:
+    first = prompts[0].strip()
+    if not first:
+        return None
+    if len(first) > _SUMMARY_MAX_CHARS:
+        first = first[:_SUMMARY_MAX_CHARS].rstrip() + "…"
+    return first
+
+
+def _digest_from_prompts(prompts: list[str]) -> str | None:
+    joined = "\n\n".join(p.strip() for p in prompts if p.strip())
+    if not joined:
+        return None
+    return redact_text(joined)
+
+
+def _append_session_log(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(entry, separators=(",", ":")) + "\n"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def _read_session_log(path: Path) -> list[dict]:
+    out: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return out
+    return out
 
 
 def _resolve_git_context(cwd: str) -> tuple[str | None, str | None, str | None]:

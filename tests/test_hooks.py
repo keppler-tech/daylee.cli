@@ -10,8 +10,8 @@ def test_install_creates_file_with_daylee_marker(isolated_claude_settings: Path)
 
     data = json.loads(isolated_claude_settings.read_text())
     assert "hooks" in data
-    assert "SessionStart" in data["hooks"]
-    assert "SessionEnd" in data["hooks"]
+    for hook_name in ("SessionStart", "SessionEnd", "PostToolUse", "UserPromptSubmit"):
+        assert hook_name in data["hooks"]
 
     entry = data["hooks"]["SessionStart"][0]
     assert entry["matcher"] == "*"
@@ -26,7 +26,7 @@ def test_install_is_idempotent(isolated_claude_settings: Path):
 
     data = json.loads(isolated_claude_settings.read_text())
     # Each hook should still have exactly one Daylee entry.
-    for hook_name in ("SessionStart", "SessionEnd"):
+    for hook_name in ("SessionStart", "SessionEnd", "PostToolUse", "UserPromptSubmit"):
         bucket = data["hooks"][hook_name]
         daylee_entries = [e for e in bucket if e.get("hooks", [{}])[0].get("_daylee")]
         assert len(daylee_entries) == 1

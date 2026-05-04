@@ -15,8 +15,12 @@ from typing import Iterable
 from .paths import claude_settings_path
 
 
-# MVP: only SessionStart and SessionEnd. V1 adds PostToolUse and UserPromptSubmit.
-DEFAULT_HOOKS: tuple[str, ...] = ("SessionStart", "SessionEnd")
+DEFAULT_HOOKS: tuple[str, ...] = (
+    "SessionStart",
+    "SessionEnd",
+    "PostToolUse",
+    "UserPromptSubmit",
+)
 
 _BACKUP_SUFFIX = ".daylee-bak"
 _DAYLEE_MARKER = "_daylee"
