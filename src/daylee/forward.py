@@ -170,7 +170,31 @@ def _spawn_flusher_if_needed() -> None:
 
 def main_stdin() -> int:
     raw = sys.stdin.read() if not sys.stdin.isatty() else ""
-    return forward_one_event(raw)
+
+    # Detach via double-fork so Claude Code's hook returns immediately.
+    # The git subprocess lookup, queue write, and flusher spawn all run
+    # in the detached grandchild — keeping `/clear` and other hook-firing
+    # commands out of our critical path.
+    try:
+        first = os.fork()
+    except OSError:
+        # Fork failed; fall back to inline so the event is not dropped.
+        return forward_one_event(raw)
+    if first > 0:
+        return 0
+
+    os.setsid()
+    try:
+        second = os.fork()
+    except OSError:
+        os._exit(0)
+    if second > 0:
+        os._exit(0)
+
+    try:
+        forward_one_event(raw)
+    finally:
+        os._exit(0)
 
 
 # Exposed for tests
