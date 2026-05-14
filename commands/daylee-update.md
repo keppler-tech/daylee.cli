@@ -8,7 +8,9 @@ Daylee MCP server is wired in as `daylee`. Follow these steps:
 
 1. Call `mcp__daylee__get_last_update` to find the timestamp of the
    user's previous submission. Call `mcp__daylee__get_standup_window`
-   to discover the active standup window for each team they're on.
+   to discover the active standup window for each team they're on,
+   along with the prompt `questions` each team has configured (these
+   may be team-specific or the application defaults).
 
 2. Decide the time window your summary covers:
    - **since** = `last_update.until` if present, else the earliest
@@ -24,9 +26,15 @@ Daylee MCP server is wired in as `daylee`. Follow these steps:
    Plus what you already know from this conversation: what the user
    asked for, what got built, blockers, decisions.
 
-4. Write a tight summary in 3–6 bullets. Focus on **outcomes**, not
-   tool calls. Name specific repos / branches / PRs / tickets when you
-   know them. Skip filler like "we discussed" or "I helped with".
+4. Write the summary so it explicitly answers the team's configured
+   `questions`. For each question, render it as a bold heading (or a
+   short label) followed by 1–3 bullets of outcome-focused content.
+   Name specific repos / branches / PRs / tickets when you know them.
+   Skip filler like "we discussed" or "I helped with". If the user is
+   on multiple teams with different questions, prefer the union of
+   questions and answer each once. If a question genuinely has no
+   relevant signal for this window, write a single short bullet such
+   as "Nothing this window." rather than omitting the question.
 
 5. Build the structured payload:
    - `repos`: list of repo labels touched (e.g. `["acme/api"]`)
