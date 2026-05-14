@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import socket
-import sys
 import time
 
 import click
 import httpx
 
-from . import api, flusher, forward, hooks, queue as queue_mod
+from . import api
 from .config import (
     Credentials,
     DEFAULT_SERVER_URL,
@@ -18,18 +18,16 @@ from .config import (
     save_config,
     save_credentials,
 )
-from .paths import (
-    config_dir,
-    config_file,
-    ensure_config_dir,
-    flusher_pid_file,
-)
+from .paths import config_dir, config_file, ensure_config_dir
+
+
+SUPPORTED_AGENTS = ("claude-code", "cursor", "codex", "print")
 
 
 @click.group()
 @click.version_option()
 def main() -> None:
-    """daylee — bridges Claude Code sessions into your team's Daylee standups."""
+    """daylee — link your AI coding agent to your team's Daylee standups."""
 
 
 @main.command()
@@ -90,7 +88,7 @@ def login(server: str | None) -> None:
                     fg="green",
                 )
             )
-            click.echo("Run `daylee install-hooks` next to start capturing sessions.")
+            click.echo("Run `daylee connect` next to wire Daylee into your coding agent.")
             return
 
         time.sleep(2)
@@ -100,30 +98,89 @@ def login(server: str | None) -> None:
     raise click.ClickException("Timed out waiting for link.")
 
 
-@main.command("install-hooks")
-def install_hooks() -> None:
-    """Register Claude Code hooks (~/.claude/settings.json)."""
-    path = hooks.install()
-    click.echo(f"Installed daylee hooks into {path}")
+@main.command()
+@click.option(
+    "--agent",
+    type=click.Choice(SUPPORTED_AGENTS),
+    default="print",
+    show_default=True,
+    help="Which agent's MCP config snippet to render.",
+)
+def connect(agent: str) -> None:
+    """Print MCP config you can paste into your coding agent.
+
+    Daylee exposes a Model Context Protocol server. Once you've linked
+    this device with ``daylee login``, this command prints a config
+    snippet to add to your agent's MCP settings so it can call Daylee
+    tools directly.
+    """
+    creds = load_credentials()
+    if not creds:
+        raise click.ClickException("Not linked yet. Run `daylee login` first.")
+
+    config = load_config()
+    mcp_url = f"{config.server_url.rstrip('/')}/api/mcp/"
+
+    if agent == "codex":
+        click.echo(_codex_snippet(mcp_url, creds.device_token))
+        click.echo()
+        click.echo("Append to ~/.codex/config.toml.")
+        return
+
+    if agent == "claude-code":
+        snippet = _json_snippet(mcp_url, creds.device_token)
+        click.echo(snippet)
+        click.echo()
+        click.echo("Add the `daylee` entry under `mcpServers` in ~/.claude.json")
+        click.echo("(or a project-local .mcp.json).")
+        return
+
+    if agent == "cursor":
+        snippet = _json_snippet(mcp_url, creds.device_token)
+        click.echo(snippet)
+        click.echo()
+        click.echo("Add the `daylee` entry under `mcpServers` in ~/.cursor/mcp.json.")
+        return
+
+    # Default "print" mode: show all three.
+    click.echo("# Claude Code  (~/.claude.json — `mcpServers` key)")
+    click.echo("# Cursor       (~/.cursor/mcp.json — `mcpServers` key)")
+    click.echo(_json_snippet(mcp_url, creds.device_token))
+    click.echo()
+    click.echo("# Codex CLI    (~/.codex/config.toml)")
+    click.echo(_codex_snippet(mcp_url, creds.device_token))
 
 
-@main.command("uninstall-hooks")
-def uninstall_hooks() -> None:
-    """Remove Daylee-tagged Claude Code hooks."""
-    path = hooks.uninstall()
-    if path is None:
-        click.echo("No Claude Code settings file found; nothing to remove.")
-    else:
-        click.echo(f"Removed daylee hooks from {path}")
+def _json_snippet(url: str, token: str) -> str:
+    return json.dumps(
+        {
+            "mcpServers": {
+                "daylee": {
+                    "type": "http",
+                    "url": url,
+                    "headers": {"Authorization": f"Bearer {token}"},
+                }
+            }
+        },
+        indent=2,
+    )
+
+
+def _codex_snippet(url: str, token: str) -> str:
+    return (
+        "[mcp_servers.daylee]\n"
+        f'url = "{url}"\n'
+        "\n"
+        "[mcp_servers.daylee.headers]\n"
+        f'Authorization = "Bearer {token}"\n'
+    )
 
 
 @main.command()
 def status() -> None:
-    """Show CLI status: linked user, queued events, hook health."""
+    """Show CLI status: linked user, config location."""
     config = load_config()
     creds = load_credentials()
-    queued = queue_mod.queue_size()
-    pid_path = flusher_pid_file()
 
     click.echo(f"Server:        {config.server_url}")
     click.echo(f"Config dir:    {config_dir()}")
@@ -132,86 +189,18 @@ def status() -> None:
         click.echo(f"Device id:     {creds.device_id}")
     else:
         click.echo("Linked user:   (none — run `daylee login`)")
-    click.echo(f"Hooks:         {'installed' if hooks.is_installed() else 'not installed'}")
-    click.echo(f"Queued events: {queued}")
-    if pid_path.exists():
-        click.echo(f"Flusher pid:   {pid_path.read_text().strip()}")
 
 
 @main.command()
 @click.option("--server", default=None, help="Set the Daylee API URL.")
-@click.option("--send-raw-prompts/--no-send-raw-prompts", default=None)
-@click.option("--add-allowlist", "add_allowlist", multiple=True, metavar="PATTERN",
-              help="Add a substring to repo_allowlist (repeatable).")
-@click.option("--remove-allowlist", "remove_allowlist", multiple=True, metavar="PATTERN",
-              help="Remove a substring from repo_allowlist (repeatable).")
-@click.option("--add-denylist", "add_denylist", multiple=True, metavar="PATTERN",
-              help="Add a substring to repo_denylist (repeatable).")
-@click.option("--remove-denylist", "remove_denylist", multiple=True, metavar="PATTERN",
-              help="Remove a substring from repo_denylist (repeatable).")
-def config(
-    server: str | None,
-    send_raw_prompts: bool | None,
-    add_allowlist: tuple[str, ...],
-    remove_allowlist: tuple[str, ...],
-    add_denylist: tuple[str, ...],
-    remove_denylist: tuple[str, ...],
-) -> None:
+def config(server: str | None) -> None:
     """Show or update CLI config."""
     cfg = load_config()
-    changed = False
     if server is not None:
         cfg.server_url = server
-        changed = True
-    if send_raw_prompts is not None:
-        cfg.send_raw_prompts = send_raw_prompts
-        changed = True
-
-    cfg.repo_allowlist, allow_changed = _apply_list_edits(
-        cfg.repo_allowlist, add_allowlist, remove_allowlist
-    )
-    cfg.repo_denylist, deny_changed = _apply_list_edits(
-        cfg.repo_denylist, add_denylist, remove_denylist
-    )
-    changed = changed or allow_changed or deny_changed
-
-    if changed:
         save_config(cfg)
         click.echo(f"Wrote {config_file()}")
-
-    click.echo(f"server_url       = {cfg.server_url}")
-    click.echo(f"send_raw_prompts = {cfg.send_raw_prompts}")
-    click.echo(f"repo_allowlist   = {cfg.repo_allowlist}")
-    click.echo(f"repo_denylist    = {cfg.repo_denylist}")
-
-
-def _apply_list_edits(
-    current: list[str], add: tuple[str, ...], remove: tuple[str, ...]
-) -> tuple[list[str], bool]:
-    """Add/remove patterns while preserving order and avoiding duplicates."""
-    result = list(current)
-    changed = False
-    for pat in add:
-        if pat and pat not in result:
-            result.append(pat)
-            changed = True
-    for pat in remove:
-        if pat in result:
-            result.remove(pat)
-            changed = True
-    return result, changed
-
-
-@main.command("forward", hidden=True)
-def forward_cmd() -> None:
-    """Internal: hook target. Reads JSON from stdin and queues an event."""
-    sys.exit(forward.main_stdin())
-
-
-@main.command("_flush", hidden=True)
-def flush_cmd() -> None:
-    """Internal: background flusher entry point."""
-    sys.exit(flusher.run())
+    click.echo(f"server_url = {cfg.server_url}")
 
 
 if __name__ == "__main__":

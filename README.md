@@ -1,8 +1,8 @@
-# daylee — Claude Code bridge for Daylee standups
+# daylee — connect your coding agent to Daylee
 
-`daylee` is a small CLI that captures Claude Code session activity on a
-developer's machine and forwards it to the Daylee backend. The activity
-feeds the AI-generated standup draft alongside GitHub, Linear, and JIRA.
+`daylee` is a small CLI that links your machine to the Daylee backend
+so any MCP-capable coding agent (Claude Code, Cursor, Codex, …) can
+push standup updates on your behalf.
 
 ## Install
 
@@ -16,21 +16,41 @@ pipx install daylee
 daylee login            # prints a 6-character code
                         # paste it into Slack: /daylee link <code>
 
-daylee install-hooks    # registers Claude Code hooks (~/.claude/settings.json)
+daylee connect          # prints MCP config snippets for the major agents
+                        # (use --agent claude-code|cursor|codex for one
+                        # specific snippet)
 
 daylee status           # confirm everything is wired up
 ```
 
-## What gets sent
+After pasting the snippet into your agent's MCP config, the agent has
+access to three Daylee tools:
 
-By default: timestamps, durations, working directory, git remote, branch,
-file paths touched, tool-use counts, and a locally-redacted prompt digest
-(2 KB max). Tool *output* is never sent. Raw prompts are opt-in via
-`~/.config/daylee/config.toml`.
+| Tool | Purpose |
+|---|---|
+| `mcp__daylee__get_last_update` | Returns the timestamp of your most recent submission |
+| `mcp__daylee__get_standup_window` | Returns the active standup window(s) for your team(s) |
+| `mcp__daylee__submit_update` | Submits a standup update on your behalf |
+
+## Pushing an update
+
+In **Claude Code**, install the bundled slash command and run:
+```bash
+mkdir -p ~/.claude/commands
+cp <repo>/plugins/daylee/commands/daylee-update.md ~/.claude/commands/
+```
+```
+/daylee-update
+```
+
+In **Cursor / Codex / any MCP-capable agent**:
+> "Push my Daylee update."
+
+The agent summarises your session, reads `git log`/`git status` since
+your last push, asks you to confirm the summary, then submits.
 
 ## Privacy
 
-The CLI runs a regex pass on prompts before transmission to redact AWS
-keys, GitHub PATs, Slack tokens, JWTs, and PEM private keys; `.env` file
-content is dropped entirely. The server runs the same pass again as
-defence-in-depth.
+The agent writes the summary on your machine and only the final summary
+plus structured metadata (repo, branches, files touched) is sent to the
+Daylee backend — never your raw prompts or tool outputs.

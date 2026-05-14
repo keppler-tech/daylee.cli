@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -24,9 +24,6 @@ DEFAULT_SERVER_URL = "https://daylee.work"
 @dataclass
 class Config:
     server_url: str = DEFAULT_SERVER_URL
-    send_raw_prompts: bool = False
-    repo_allowlist: list[str] = field(default_factory=list)
-    repo_denylist: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -46,21 +43,13 @@ def load_config() -> Config:
         data = tomllib.load(f)
     return Config(
         server_url=os.environ.get("DAYLEE_SERVER_URL", data.get("server_url", DEFAULT_SERVER_URL)),
-        send_raw_prompts=bool(data.get("send_raw_prompts", False)),
-        repo_allowlist=list(data.get("repo_allowlist", [])),
-        repo_denylist=list(data.get("repo_denylist", [])),
     )
 
 
 def save_config(config: Config) -> Path:
     ensure_config_dir()
     path = config_file()
-    payload = {
-        "server_url": config.server_url,
-        "send_raw_prompts": config.send_raw_prompts,
-        "repo_allowlist": config.repo_allowlist,
-        "repo_denylist": config.repo_denylist,
-    }
+    payload = {"server_url": config.server_url}
     with path.open("wb") as f:
         tomli_w.dump(payload, f)
     return path
