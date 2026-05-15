@@ -4,18 +4,36 @@ build-backend = "hatchling.build"
 
 [project]
 name = "daylee"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Daylee CLI: bridges Claude Code sessions into Daylee standup drafts."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-authors = [{ name = "Daylee" }]
+authors = [{ name = "Daylee", email = "support@daylee.work" }]
+keywords = ["standup", "cli", "mcp", "ai", "slack", "developer-tools"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
 dependencies = [
     "click>=8.1",
     "httpx>=0.27",
-    "tomli>=2.0; python_version < '3.11'",
     "tomli-w>=1.0",
 ]
+
+[project.urls]
+Homepage = "https://daylee.work"
+Documentation = "https://daylee.work/help"
+"Source Code" = "https://github.com/keppler-tech/daylee.cli"
+"Bug Tracker" = "https://github.com/keppler-tech/daylee.cli/issues"
 
 [project.scripts]
 daylee = "daylee.cli:main"
@@ -27,6 +45,9 @@ dev = [
     "respx>=0.21",
     "ruff>=0.5",
 ]
+
+[tool.hatch.version]
+path = "src/daylee/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/daylee"]

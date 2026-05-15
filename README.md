@@ -37,7 +37,8 @@ access to three Daylee tools:
 In **Claude Code**, install the bundled slash command and run:
 ```bash
 mkdir -p ~/.claude/commands
-cp <repo>/plugins/daylee/commands/daylee-update.md ~/.claude/commands/
+curl -sL https://raw.githubusercontent.com/keppler-tech/daylee.cli/master/commands/daylee-update.md \
+     -o ~/.claude/commands/daylee-update.md
 ```
 ```
 /daylee-update
