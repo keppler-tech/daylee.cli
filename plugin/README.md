@@ -20,16 +20,19 @@ session and pushes the result to Daylee as a standup update.
 
 ## Install the slash command
 
-User-level (available in every project):
-```bash
-mkdir -p ~/.claude/commands
-cp plugins/daylee/commands/daylee-update.md ~/.claude/commands/
+In Claude Code, add this repo as a plugin marketplace and install the plugin:
+
+```
+/plugin marketplace add keppler-tech/daylee.cli
+/plugin install daylee
 ```
 
-Project-level (committed alongside the repo):
+Manual install (if you don't want to use the marketplace):
+
 ```bash
-mkdir -p .claude/commands
-cp plugins/daylee/commands/daylee-update.md .claude/commands/
+mkdir -p ~/.claude/commands
+curl -sL https://raw.githubusercontent.com/keppler-tech/daylee.cli/master/plugin/commands/daylee-update.md \
+     -o ~/.claude/commands/daylee-update.md
 ```
 
 ## Use

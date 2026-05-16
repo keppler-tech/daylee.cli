@@ -1,0 +1,14 @@
+{
+  "name": "daylee",
+  "version": "0.1.0",
+  "description": "Push standup updates to Daylee directly from a Claude Code session",
+  "author": {
+    "name": "Daylee",
+    "email": "support@daylee.work",
+    "url": "https://daylee.work"
+  },
+  "homepage": "https://daylee.work",
+  "repository": "https://github.com/keppler-tech/daylee.cli",
+  "license": "Proprietary",
+  "keywords": ["standup", "slack", "mcp", "daylee"]
+}

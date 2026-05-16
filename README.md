@@ -34,15 +34,16 @@ access to three Daylee tools:
 
 ## Pushing an update
 
-In **Claude Code**, install the bundled slash command and run:
-```bash
-mkdir -p ~/.claude/commands
-curl -sL https://raw.githubusercontent.com/keppler-tech/daylee.cli/master/commands/daylee-update.md \
-     -o ~/.claude/commands/daylee-update.md
+In **Claude Code**, install the bundled plugin:
 ```
+/plugin marketplace add keppler-tech/daylee.cli
+/plugin install daylee
+```
+Then run:
 ```
 /daylee-update
 ```
+See [`plugin/README.md`](plugin/README.md) for manual install and details.
 
 In **Cursor / Codex / any MCP-capable agent**:
 > "Push my Daylee update."

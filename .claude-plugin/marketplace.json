@@ -1,0 +1,15 @@
+{
+  "name": "daylee",
+  "owner": {
+    "name": "Daylee",
+    "email": "support@daylee.work",
+    "url": "https://daylee.work"
+  },
+  "plugins": [
+    {
+      "name": "daylee",
+      "source": "./plugin",
+      "description": "Push standup updates to Daylee directly from a Claude Code session"
+    }
+  ]
+}
