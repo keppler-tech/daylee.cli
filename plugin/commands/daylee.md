@@ -1,7 +1,21 @@
 ---
-description: Push a Daylee standup update summarising this session
+description: Daylee actions (push a standup update, etc.)
+argument-hint: "[update]"
 allowed-tools: Bash(git log:*), Bash(git status:*), Bash(git diff:*), Bash(git rev-parse:*), Bash(git remote:*), mcp__daylee__get_last_update, mcp__daylee__get_standup_window, mcp__daylee__submit_update
 ---
+
+The user invoked `/daylee $ARGUMENTS`. The first argument selects the
+action; if no argument was given, default to `update`.
+
+Supported actions:
+- `update` — push a standup update summarising this session (the steps below)
+
+If the argument is anything else, reply with a one-line error listing the
+supported actions and stop. Do not call any tools.
+
+---
+
+**Action: `update`**
 
 You are pushing a Daylee standup update on behalf of the user. The
 Daylee MCP server is wired in as `daylee`. Follow these steps:

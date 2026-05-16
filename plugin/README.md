@@ -1,6 +1,6 @@
 # Daylee plugin for Claude Code
 
-A `/daylee-update` slash command that summarises your current Claude Code
+A `/daylee` slash command that summarises your current Claude Code
 session and pushes the result to Daylee as a standup update.
 
 ## Prerequisites
@@ -31,16 +31,21 @@ Manual install (if you don't want to use the marketplace):
 
 ```bash
 mkdir -p ~/.claude/commands
-curl -sL https://raw.githubusercontent.com/keppler-tech/daylee.cli/master/plugin/commands/daylee-update.md \
-     -o ~/.claude/commands/daylee-update.md
+curl -sL https://raw.githubusercontent.com/keppler-tech/daylee.cli/master/plugin/commands/daylee.md \
+     -o ~/.claude/commands/daylee.md
 ```
 
 ## Use
 
 In Claude Code:
 ```
-/daylee-update
+/daylee update
 ```
+Or, equivalently, just:
+```
+/daylee
+```
+(`update` is the default action.)
 
 Claude will:
 1. Ask Daylee for the last push timestamp and your team's standup window.

@@ -41,8 +41,9 @@ In **Claude Code**, install the bundled plugin:
 ```
 Then run:
 ```
-/daylee-update
+/daylee update
 ```
+(Or just `/daylee` — `update` is the default action.)
 See [`plugin/README.md`](plugin/README.md) for manual install and details.
 
 In **Cursor / Codex / any MCP-capable agent**:
