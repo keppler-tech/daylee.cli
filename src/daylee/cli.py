@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import time
+from pathlib import Path
 
 import click
 import httpx
@@ -18,10 +19,14 @@ from .config import (
     save_config,
     save_credentials,
 )
-from .paths import config_dir, config_file, ensure_config_dir
+from .paths import claude_settings_path, config_dir, config_file, ensure_config_dir
 
 
 SUPPORTED_AGENTS = ("claude-code", "cursor", "codex", "print")
+
+CLAUDE_MARKETPLACE_NAME = "daylee"
+CLAUDE_PLUGIN_NAME = "daylee"
+CLAUDE_MARKETPLACE_REPO = "keppler-tech/daylee.cli"
 
 
 @click.group()
@@ -128,10 +133,24 @@ def connect(agent: str) -> None:
         return
 
     if agent == "claude-code":
+        settings_path, changed = _install_claude_code_plugin()
+        if changed:
+            click.echo(
+                click.style(
+                    f"Enabled /daylee:update in {settings_path}.",
+                    fg="green",
+                )
+            )
+            click.echo("Run /reload-plugins in Claude Code, or start a new session.")
+        else:
+            click.echo(f"/daylee:update already enabled in {settings_path}.")
+        click.echo()
+        click.echo("Add the Daylee MCP server to ~/.claude.json:")
+        click.echo()
         snippet = _json_snippet(mcp_url, creds.device_token)
         click.echo(snippet)
         click.echo()
-        click.echo("Add the `daylee` entry under `mcpServers` in ~/.claude.json")
+        click.echo("Paste the `daylee` entry under `mcpServers` in ~/.claude.json")
         click.echo("(or a project-local .mcp.json).")
         return
 
@@ -164,6 +183,53 @@ def _json_snippet(url: str, token: str) -> str:
         },
         indent=2,
     )
+
+
+def _install_claude_code_plugin() -> tuple[Path, bool]:
+    """Register the Daylee plugin in Claude Code's user settings.
+
+    Adds entries to ``extraKnownMarketplaces`` and ``enabledPlugins`` in
+    ``~/.claude/settings.json`` so Claude Code surfaces ``/daylee:update``
+    on next session start. Returns ``(settings_path, changed)`` where
+    ``changed`` is ``False`` when the plugin was already enabled and
+    pointing at the same marketplace repo.
+    """
+    path = claude_settings_path()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"Could not parse {path}: {exc}. Fix it manually and re-run."
+            )
+        if not isinstance(data, dict):
+            raise click.ClickException(
+                f"{path} is not a JSON object. Fix it manually and re-run."
+            )
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+
+    marketplaces = data.setdefault("extraKnownMarketplaces", {})
+    plugins = data.setdefault("enabledPlugins", {})
+    plugin_key = f"{CLAUDE_PLUGIN_NAME}@{CLAUDE_MARKETPLACE_NAME}"
+
+    desired_marketplace = {
+        "source": {"source": "github", "repo": CLAUDE_MARKETPLACE_REPO}
+    }
+    if (
+        marketplaces.get(CLAUDE_MARKETPLACE_NAME) == desired_marketplace
+        and plugins.get(plugin_key) is True
+    ):
+        return path, False
+
+    marketplaces[CLAUDE_MARKETPLACE_NAME] = desired_marketplace
+    plugins[plugin_key] = True
+
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+    return path, True
 
 
 def _codex_snippet(url: str, token: str) -> str:

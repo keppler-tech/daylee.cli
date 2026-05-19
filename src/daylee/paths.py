@@ -26,3 +26,11 @@ def ensure_config_dir() -> Path:
     p = config_dir()
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def claude_settings_path() -> Path:
+    """Resolve the Claude Code user-settings file, honoring an override for tests."""
+    override = os.environ.get("DAYLEE_CLAUDE_SETTINGS_PATH")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".claude" / "settings.json"

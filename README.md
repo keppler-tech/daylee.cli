@@ -34,17 +34,22 @@ access to three Daylee tools:
 
 ## Pushing an update
 
-In **Claude Code**, install the bundled plugin:
+In **Claude Code**:
+```bash
+daylee connect --agent claude-code
 ```
-/plugin marketplace add keppler-tech/daylee.cli
-/plugin install daylee
+This registers the bundled plugin in `~/.claude/settings.json` (so
+`/daylee:update` is available next session, or after `/reload-plugins`)
+and prints the MCP-server snippet to paste under `mcpServers` in
+`~/.claude.json`.
+
+Then in a Claude Code session:
 ```
-Then run:
+/daylee:update
 ```
-/daylee update
-```
-(Or just `/daylee` — `update` is the default action.)
-See [`plugin/README.md`](plugin/README.md) for manual install and details.
+
+If you'd rather install the plugin via Claude Code's UI, see
+[`plugin/README.md`](plugin/README.md).
 
 In **Cursor / Codex / any MCP-capable agent**:
 > "Push my Daylee update."

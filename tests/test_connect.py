@@ -45,19 +45,86 @@ def test_connect_default_prints_all_agents(isolated_config_dir: Path):
     assert "Codex" in out
 
 
-def test_connect_claude_code_outputs_json_snippet(isolated_config_dir: Path):
+def test_connect_claude_code_outputs_json_snippet(
+    isolated_config_dir: Path, isolated_claude_settings: Path
+):
     _link()
     runner = CliRunner()
     result = runner.invoke(main, ["connect", "--agent", "claude-code"])
     assert result.exit_code == 0, result.output
 
-    # First line through the closing brace should be valid JSON.
-    json_start = result.output.index("{")
-    json_end = result.output.rindex("}") + 1
-    payload = json.loads(result.output[json_start:json_end])
+    # MCP snippet — the LAST `{...}` block, after the settings-install header.
+    mcp_start = result.output.index('{\n  "mcpServers"')
+    mcp_end = result.output.rindex("}") + 1
+    payload = json.loads(result.output[mcp_start:mcp_end])
     assert payload["mcpServers"]["daylee"]["type"] == "http"
     assert payload["mcpServers"]["daylee"]["url"] == "https://daylee.test/api/mcp/"
     assert payload["mcpServers"]["daylee"]["headers"]["Authorization"] == "Bearer tok-abc"
+
+
+def test_connect_claude_code_enables_plugin_in_settings(
+    isolated_config_dir: Path, isolated_claude_settings: Path
+):
+    _link()
+    runner = CliRunner()
+    result = runner.invoke(main, ["connect", "--agent", "claude-code"])
+    assert result.exit_code == 0, result.output
+
+    assert isolated_claude_settings.exists()
+    settings = json.loads(isolated_claude_settings.read_text())
+    assert settings["extraKnownMarketplaces"]["daylee"] == {
+        "source": {"source": "github", "repo": "keppler-tech/daylee.cli"}
+    }
+    assert settings["enabledPlugins"]["daylee@daylee"] is True
+    assert "Enabled /daylee:update" in result.output
+
+
+def test_connect_claude_code_preserves_existing_settings(
+    isolated_config_dir: Path, isolated_claude_settings: Path
+):
+    _link()
+    isolated_claude_settings.parent.mkdir(parents=True, exist_ok=True)
+    isolated_claude_settings.write_text(
+        json.dumps(
+            {
+                "env": {"FOO": "bar"},
+                "enabledPlugins": {"other@somewhere": True},
+                "extraKnownMarketplaces": {
+                    "somewhere": {"source": {"source": "github", "repo": "x/y"}}
+                },
+            }
+        )
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["connect", "--agent", "claude-code"])
+    assert result.exit_code == 0, result.output
+
+    settings = json.loads(isolated_claude_settings.read_text())
+    assert settings["env"] == {"FOO": "bar"}
+    assert settings["enabledPlugins"]["other@somewhere"] is True
+    assert settings["enabledPlugins"]["daylee@daylee"] is True
+    assert settings["extraKnownMarketplaces"]["somewhere"] == {
+        "source": {"source": "github", "repo": "x/y"}
+    }
+    assert settings["extraKnownMarketplaces"]["daylee"] == {
+        "source": {"source": "github", "repo": "keppler-tech/daylee.cli"}
+    }
+
+
+def test_connect_claude_code_is_idempotent(
+    isolated_config_dir: Path, isolated_claude_settings: Path
+):
+    _link()
+    runner = CliRunner()
+
+    first = runner.invoke(main, ["connect", "--agent", "claude-code"])
+    assert first.exit_code == 0, first.output
+    assert "Enabled /daylee:update" in first.output
+
+    second = runner.invoke(main, ["connect", "--agent", "claude-code"])
+    assert second.exit_code == 0, second.output
+    assert "already enabled" in second.output
 
 
 def test_connect_codex_outputs_toml_snippet(isolated_config_dir: Path):
